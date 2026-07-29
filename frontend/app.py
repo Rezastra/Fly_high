@@ -259,6 +259,13 @@ def gauge_figure(rul: float, risk: str, max_scale: float = 150):
     return fig
 
 
+def hex_to_rgba(hex_color: str, alpha: float = 0.1) -> str:
+    """Convert '#RRGGBB' to an 'rgba(r,g,b,a)' string Plotly accepts."""
+    hex_color = hex_color.lstrip("#")
+    r, g, b = (int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 def history_figure(history: list, risk: str):
     color = RISK_COLORS.get(risk, DEFAULT_COLOR)
     cycles = [h["cycle"] for h in history]
@@ -270,7 +277,7 @@ def history_figure(history: list, risk: str):
             mode="lines",
             line=dict(color=color, width=2.5),
             fill="tozeroy",
-            fillcolor=color + "1A",
+            fillcolor=hex_to_rgba(color, 0.1),
         )
     )
     fig.update_layout(
@@ -321,7 +328,7 @@ def sidebar():
     )
     st.session_state["base_url"] = base_url.rstrip("/")
 
-    if st.sidebar.button("Check connection", use_container_width=True):
+    if st.sidebar.button("Check connection", width="stretch"):
         ok, info = api_health(st.session_state["base_url"])
         st.session_state["health_ok"] = ok
         st.session_state["health_info"] = info
@@ -337,11 +344,11 @@ def sidebar():
     uploaded = st.sidebar.file_uploader(
         "CMAPSS .txt or .csv", type=["txt", "csv"], accept_multiple_files=False
     )
-    analyze = st.sidebar.button("Analyze fleet", type="primary", use_container_width=True)
+    analyze = st.sidebar.button("Analyze fleet", type="primary", width="stretch")
 
     st.sidebar.markdown("---")
     with st.sidebar.expander("Model info"):
-        if st.button("Fetch model info", use_container_width=True):
+        if st.button("Fetch model info", width="stretch"):
             info, err = api_model_info(st.session_state["base_url"])
             if err:
                 st.error(err)
@@ -401,7 +408,7 @@ def render_fleet_overview(data: dict):
     with c4:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
         st.markdown('<div class="metric-label">Risk distribution</div>', unsafe_allow_html=True)
-        st.plotly_chart(risk_bar_figure(counts), use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(risk_bar_figure(counts), width="stretch", config={"displayModeBar": False})
         st.markdown("</div>", unsafe_allow_html=True)
 
     return df
@@ -427,7 +434,7 @@ def render_engine_cards(data: dict, df: pd.DataFrame):
             with gcol:
                 st.plotly_chart(
                     gauge_figure(e["predicted_rul"], e["risk"]),
-                    use_container_width=True,
+                    width="stretch",
                     config={"displayModeBar": False},
                     key=f"gauge_{e['engine_id']}",
                 )
@@ -437,7 +444,7 @@ def render_engine_cards(data: dict, df: pd.DataFrame):
                 st.markdown('<div class="metric-label">Degradation trend</div>', unsafe_allow_html=True)
                 st.plotly_chart(
                     history_figure(e["history"], e["risk"]),
-                    use_container_width=True,
+                    width="stretch",
                     config={"displayModeBar": False},
                     key=f"hist_{e['engine_id']}",
                 )
@@ -446,7 +453,7 @@ def render_engine_cards(data: dict, df: pd.DataFrame):
     st.markdown("#### Fleet summary table")
     st.dataframe(
         df.sort_values("predicted_rul")[["engine_id", "current_cycle", "predicted_rul", "risk", "recommendation"]],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     csv = df.to_csv(index=False).encode("utf-8")
@@ -489,7 +496,7 @@ def render_feature_importance():
             yaxis=dict(color="#E8EDF4", autorange="reversed"),
             font={"family": "Inter", "color": "#E8EDF4"},
         )
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 # --------------------------------------------------------------------------
