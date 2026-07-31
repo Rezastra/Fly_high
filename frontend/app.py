@@ -96,6 +96,10 @@ def inject_css():
             padding: 1.1rem 1.3rem;
             box-shadow: 0 1px 2px rgba(32,33,36,0.04);
             transition: box-shadow 0.2s ease, border-color 0.2s ease;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
         }
         .panel:hover {
             border-color: #20BEFF;
@@ -152,7 +156,8 @@ def inject_css():
         }
 
         /* Headings & body text */
-        h1, h2, h3, h4, h5, h6, p, label, span, div {
+        .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+        .hero-title, .hero-sub, .metric-value, .metric-label, .callsign {
             color: #202124;
         }
 
@@ -561,11 +566,11 @@ def sidebar():
     uploaded = st.sidebar.file_uploader(
         "CMAPSS .txt or .csv", type=["txt", "csv"], accept_multiple_files=False
     )
-    analyze = st.sidebar.button("Analyze fleet", type="primary", width="stretch")
+    analyze = st.sidebar.button("Analyze fleet", type="primary", use_container_width=True)
 
     st.sidebar.markdown("---")
     with st.sidebar.expander("Model info"):
-        if st.button("Fetch model info", width="stretch"):
+        if st.button("Fetch model info", use_container_width=True):
             info, err = api_model_info(st.session_state["base_url"])
             if err:
                 st.session_state["model_info_error"] = err
@@ -614,26 +619,38 @@ def render_fleet_overview(data: dict):
 
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1.6])
     with c1:
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        st.markdown('<div class="metric-label">Engines in fleet</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">{data["engine_count"]}</div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(
+            f'''<div class="panel">
+                <div class="metric-label">Engines in fleet</div>
+                <div class="metric-value">{data["engine_count"]}</div>
+            </div>''',
+            unsafe_allow_html=True,
+        )
     with c2:
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        st.markdown('<div class="metric-label">Avg predicted RUL</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">{df["predicted_rul"].mean():.1f}</div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(
+            f'''<div class="panel">
+                <div class="metric-label">Avg predicted RUL</div>
+                <div class="metric-value">{df["predicted_rul"].mean():.1f}</div>
+            </div>''',
+            unsafe_allow_html=True,
+        )
     with c3:
         worst = df.loc[df["predicted_rul"].idxmin()]
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        st.markdown('<div class="metric-label">Most urgent engine</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">#{int(worst["engine_id"])}</div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(
+            f'''<div class="panel">
+                <div class="metric-label">Most urgent engine</div>
+                <div class="metric-value">#{int(worst["engine_id"])}</div>
+            </div>''',
+            unsafe_allow_html=True,
+        )
     with c4:
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        st.markdown('<div class="metric-label">Risk distribution</div>', unsafe_allow_html=True)
-        st.plotly_chart(risk_bar_figure(counts), width="stretch", config={"displayModeBar": False})
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(
+            '''<div class="panel">
+                <div class="metric-label">Risk distribution</div>
+            </div>''',
+            unsafe_allow_html=True,
+        )
+        st.plotly_chart(risk_bar_figure(counts), use_container_width=True, config={"displayModeBar": False})
 
     return df
 
@@ -734,22 +751,15 @@ def _engine_card_grid_html(engines: list) -> str:
         /* Fix 1: the popup used to inherit the card's own ~260px width
            (left:0; right:0), which is what squeezed the charts and made
            the "Predicted RUL" axis title collide with the plot. It's now
-           a fixed, wider panel with enough min-height to fit both charts
-           + the recommendation text comfortably. Default position is
-           roughly centered under the card (`left` here is just a starting
-           point) — the JS below measures each card on hover and overrides
-           `left`/`top`/`bottom` per-card so the panel never runs off the
-           side of the grid, and opens upward instead of downward for
-           bottom-row cards. */
         .card-detail {{
             position: absolute; left: calc(50% - 180px);
             top: calc(100% + 8px); bottom: auto;
-            width: 360px; min-height: 480px;
+            width: 360px; min-height: 460px;
             background: #FFFFFF; border: 1px solid {GRID_COLOR}; border-radius: 14px;
             padding: 14px 18px 18px; box-shadow: 0 12px 32px rgba(32,33,36,0.18);
             opacity: 0; pointer-events: none;
             transform: translateY(-6px);
-            transition: opacity .18s ease, transform .18s ease, left .12s ease; z-index: 9999;
+            transition: opacity .18s ease, transform .18s ease; z-index: 9999;
         }}
         .engine-card:hover .card-detail {{
             opacity: 1; pointer-events: auto; transform: translateY(0);
@@ -906,8 +916,7 @@ def render_engine_cards(data: dict, df: pd.DataFrame):
     approx_cols = 4  # rough desktop column estimate; live resize corrects the rest
     rows = math.ceil(len(engines) / approx_cols)
     base_height = rows * 130 + 40
-    hover_headroom = 560
-    initial_height = min(base_height + hover_headroom, 9000)
+    initial_height = max(320, base_height + 40)
 
     components.html(_engine_card_grid_html(engines), height=initial_height, scrolling=False)
 
@@ -915,7 +924,7 @@ def render_engine_cards(data: dict, df: pd.DataFrame):
     st.markdown("#### Fleet summary table")
     st.dataframe(
         df.sort_values("predicted_rul")[["engine_id", "current_cycle", "predicted_rul", "risk", "recommendation"]],
-        width="stretch",
+        use_container_width=True,
         hide_index=True,
     )
     csv = df.to_csv(index=False).encode("utf-8")
@@ -926,12 +935,21 @@ def render_feature_importance():
     runway_divider()
     st.markdown("#### Feature importance")
     top_n = st.slider("Top N features", min_value=3, max_value=21, value=10)
-    if st.button("Load feature importance"):
-        info, err = api_feature_importance(st.session_state["base_url"], top_n)
-        if err:
-            st.error(err)
+    btn_clicked = st.button("Load feature importance")
+    if btn_clicked or "feature_importance_data" in st.session_state:
+        if btn_clicked or st.session_state.get("_last_top_n") != top_n:
+            info, err = api_feature_importance(st.session_state["base_url"], top_n)
+            if err:
+                st.error(err)
+                return
+            st.session_state["feature_importance_data"] = info
+            st.session_state["_last_top_n"] = top_n
+
+        info = st.session_state.get("feature_importance_data")
+        if not info:
             return
-        items = info.get("feature_importance") or info.get("importances") or info
+
+        items = info.get("features") or info.get("feature_importance") or info.get("importances") or info
         if isinstance(items, dict):
             names = list(items.keys())
             vals = list(items.values())
@@ -941,6 +959,7 @@ def render_feature_importance():
         else:
             st.json(info)
             return
+
         fig = go.Figure(
             go.Bar(
                 x=vals,
@@ -958,7 +977,7 @@ def render_feature_importance():
             yaxis=dict(color=DARK_TEXT, autorange="reversed"),
             font={"family": "Inter", "color": DARK_TEXT},
         )
-        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
 # --------------------------------------------------------------------------
