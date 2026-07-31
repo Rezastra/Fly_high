@@ -7,6 +7,7 @@ Run with:
 """
 
 import html as html_escape
+import math
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -167,10 +168,23 @@ def inject_css():
             padding: 0.5rem 1.4rem;
             transition: background 0.2s ease, box-shadow 0.2s ease;
         }
+        /* The catch-all text-color rule above repaints Streamlit's inner
+           <p>/<div>/<span> button-label wrapper dark; force it back to
+           white here so the label is actually visible on the black pill. */
+        .stButton > button[kind="primary"] p,
+        .stButton > button[kind="primary"] div,
+        .stButton > button[kind="primary"] span {
+            color: #FFFFFF !important;
+        }
         .stButton > button[kind="primary"]:hover {
             background: #3C4043;
             box-shadow: 0 2px 10px rgba(32,33,36,0.25);
             color: #FFFFFF;
+        }
+        .stButton > button[kind="primary"]:hover p,
+        .stButton > button[kind="primary"]:hover div,
+        .stButton > button[kind="primary"]:hover span {
+            color: #FFFFFF !important;
         }
 
         /* Secondary buttons — pill, white, thin gray border */
@@ -185,10 +199,42 @@ def inject_css():
             padding: 0.5rem 1.4rem;
             transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
+        .stButton > button[kind="secondary"] p,
+        .stButton > button[kind="secondary"] div,
+        .stButton > button[kind="secondary"] span {
+            color: #202124 !important;
+        }
         .stButton > button[kind="secondary"]:hover {
             border-color: #20BEFF;
             color: #20BEFF;
             box-shadow: 0 2px 8px rgba(32,190,255,0.18);
+        }
+        .stButton > button[kind="secondary"]:hover p,
+        .stButton > button[kind="secondary"]:hover div,
+        .stButton > button[kind="secondary"]:hover span {
+            color: #20BEFF !important;
+        }
+
+        /* Download button — same pill treatment as primary actions */
+        .stDownloadButton > button {
+            font-family: 'Inter', sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            border-radius: 50px;
+            border: none;
+            background: #202124;
+            color: #FFFFFF;
+            padding: 0.5rem 1.4rem;
+            transition: background 0.2s ease, box-shadow 0.2s ease;
+        }
+        .stDownloadButton > button p,
+        .stDownloadButton > button div,
+        .stDownloadButton > button span {
+            color: #FFFFFF !important;
+        }
+        .stDownloadButton > button:hover {
+            background: #3C4043;
+            box-shadow: 0 2px 10px rgba(32,33,36,0.25);
         }
 
         /* Text inputs — pill-shaped, white, thin gray border */
@@ -295,6 +341,57 @@ def api_model_info(base_url: str):
         return None, str(e)
 
 
+def _pretty_label(key: str) -> str:
+    return key.replace("_", " ").strip().title()
+
+
+def render_model_info(info: dict):
+    """Render /api/model-info compactly instead of dumping raw JSON:
+    any flat list (feature_columns, sensors_used, etc.) as wrapped inline
+    code chips, numeric metadata as st.metric, other scalar metadata as
+    bullet points, and anything genuinely nested tucked into a collapsed
+    fallback.
+    """
+    if not isinstance(info, dict):
+        st.write(info)
+        return
+
+    scalar_items = {k: v for k, v in info.items() if isinstance(v, (str, int, float, bool))}
+    numeric_items = {k: v for k, v in scalar_items.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
+    text_items = {k: v for k, v in scalar_items.items() if k not in numeric_items}
+
+    # Any flat list of strings/numbers (feature_columns, sensors_used, ...)
+    # renders the same compact way; only genuinely nested values fall back
+    # to raw JSON.
+    list_items = {
+        k: v for k, v in info.items()
+        if isinstance(v, list) and v and all(isinstance(i, (str, int, float, bool)) for i in v)
+    }
+    leftover = {k: v for k, v in info.items() if k not in scalar_items and k not in list_items}
+
+    if numeric_items:
+        cols = st.columns(min(len(numeric_items), 3))
+        for i, (k, v) in enumerate(numeric_items.items()):
+            with cols[i % len(cols)]:
+                st.metric(_pretty_label(k), v)
+
+    if text_items:
+        for k, v in text_items.items():
+            st.markdown(f"- **{_pretty_label(k)}:** {v}")
+
+    # Show feature_columns first if present, then any other flat lists.
+    ordered_keys = sorted(list_items.keys(), key=lambda k: (k != "feature_columns", k))
+    for k in ordered_keys:
+        values = list_items[k]
+        label = "Feature columns" if k == "feature_columns" else _pretty_label(k)
+        st.markdown(f"**{label}** &nbsp;·&nbsp; {len(values)} total")
+        st.markdown(", ".join(f"`{v}`" for v in values))
+
+    if leftover:
+        with st.expander("Other fields", expanded=False):
+            st.json(leftover)
+
+
 def api_predict(base_url: str, file_bytes: bytes, filename: str):
     try:
         files = {"file": (filename, file_bytes)}
@@ -357,9 +454,11 @@ def gauge_figure(rul: float, risk: str, max_scale: float = 150):
             },
         )
     )
+    # Fix 1: give the gauge a bit more room top/bottom so the number and
+    # tick labels don't crowd the edges of the (now larger) hover card.
     fig.update_layout(
-        height=220,
-        margin=dict(l=20, r=20, t=10, b=10),
+        height=230,
+        margin=dict(l=30, r=30, t=25, b=15),
         paper_bgcolor="rgba(0,0,0,0)",
         font={"color": DARK_TEXT, "family": "Inter"},
     )
@@ -387,13 +486,18 @@ def history_figure(history: list, risk: str):
             fillcolor=hex_to_rgba(color, 0.14),
         )
     )
+    # Fix 1: the old margins (l=10) were too tight for the "Predicted RUL"
+    # axis title, which is what caused it to overlap the plot area.
+    # `automargin=True` lets Plotly reserve however much space the tick
+    # labels + axis title actually need, and the explicit left margin gives
+    # it a sane minimum to start from.
     fig.update_layout(
-        height=200,
-        margin=dict(l=10, r=10, t=10, b=10),
+        height=190,
+        margin=dict(l=48, r=15, t=15, b=34),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(title="Cycle", gridcolor=GRID_COLOR, color=TEXT_SECONDARY),
-        yaxis=dict(title="Predicted RUL", gridcolor=GRID_COLOR, color=TEXT_SECONDARY),
+        xaxis=dict(title="Cycle", gridcolor=GRID_COLOR, color=TEXT_SECONDARY, automargin=True),
+        yaxis=dict(title="Predicted RUL", gridcolor=GRID_COLOR, color=TEXT_SECONDARY, automargin=True),
         font={"family": "Inter", "color": DARK_TEXT, "size": 11},
     )
     return fig
@@ -432,19 +536,25 @@ def sidebar():
     st.sidebar.markdown("### Backend connection")
     base_url = st.sidebar.text_input(
         "API base URL", value=st.session_state.get("base_url", "http://127.0.0.1:8000")
-    )
-    st.session_state["base_url"] = base_url.rstrip("/")
+    ).rstrip("/")
+    st.session_state["base_url"] = base_url
 
-    if st.sidebar.button("Check connection", width="stretch"):
-        ok, info = api_health(st.session_state["base_url"])
+    # Auto health-check: runs once on first load, and again whenever the
+    # URL actually changes — not on every unrelated widget rerun, so typing
+    # elsewhere in the app doesn't repeatedly hit the backend.
+    if base_url and st.session_state.get("_last_checked_url") != base_url:
+        with st.sidebar.spinner("Checking backend..."):
+            ok, info = api_health(base_url)
         st.session_state["health_ok"] = ok
         st.session_state["health_info"] = info
+        st.session_state["_last_checked_url"] = base_url
 
-    if "health_ok" in st.session_state:
-        if st.session_state["health_ok"]:
-            st.sidebar.success("Backend online")
-        else:
-            st.sidebar.error(f"Unreachable: {st.session_state['health_info']}")
+    if not base_url:
+        st.sidebar.warning("Enter an API base URL.")
+    elif st.session_state.get("health_ok"):
+        st.sidebar.success("Backend online")
+    else:
+        st.sidebar.error(f"Backend offline — {st.session_state.get('health_info', 'unknown error')}")
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Upload flight data")
@@ -458,9 +568,16 @@ def sidebar():
         if st.button("Fetch model info", width="stretch"):
             info, err = api_model_info(st.session_state["base_url"])
             if err:
-                st.error(err)
+                st.session_state["model_info_error"] = err
+                st.session_state.pop("model_info", None)
             else:
-                st.json(info)
+                st.session_state["model_info"] = info
+                st.session_state.pop("model_info_error", None)
+
+        if st.session_state.get("model_info_error"):
+            st.error(st.session_state["model_info_error"])
+        elif "model_info" in st.session_state:
+            render_model_info(st.session_state["model_info"])
 
     return uploaded, analyze
 
@@ -574,9 +691,12 @@ def _engine_card_grid_html(engines: list) -> str:
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
     <style>
         * {{ box-sizing: border-box; }}
-        body {{
+        html, body {{
             margin: 0; padding: 4px;
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            /* Fix 2: never clip — the whole point of the resize script
+               below is that the iframe grows to fit this content, so the
+               content itself must never be constrained or scrollable. */
             overflow: visible;
         }}
         .engine-grid {{
@@ -584,6 +704,7 @@ def _engine_card_grid_html(engines: list) -> str:
             grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
             gap: 20px;
             padding-bottom: 24px;
+            overflow: visible;
         }}
         .engine-card {{
             position: relative;
@@ -597,7 +718,7 @@ def _engine_card_grid_html(engines: list) -> str:
         .engine-card:hover {{
             border-color: {ACCENT_BLUE};
             box-shadow: 0 8px 24px rgba(32,33,36,0.14);
-            z-index: 20;
+            z-index: 9998;
         }}
         .card-row {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }}
         .engine-id {{ font-weight: 700; color: {DARK_TEXT}; font-size: 0.95rem; }}
@@ -609,12 +730,26 @@ def _engine_card_grid_html(engines: list) -> str:
         }}
         .progress-track {{ background: #F1F3F4; border-radius: 999px; height: 6px; overflow: hidden; }}
         .progress-fill {{ height: 100%; border-radius: 999px; transition: width .2s ease; }}
+
+        /* Fix 1: the popup used to inherit the card's own ~260px width
+           (left:0; right:0), which is what squeezed the charts and made
+           the "Predicted RUL" axis title collide with the plot. It's now
+           a fixed, wider panel with enough min-height to fit both charts
+           + the recommendation text comfortably. Default position is
+           roughly centered under the card (`left` here is just a starting
+           point) — the JS below measures each card on hover and overrides
+           `left`/`top`/`bottom` per-card so the panel never runs off the
+           side of the grid, and opens upward instead of downward for
+           bottom-row cards. */
         .card-detail {{
-            position: absolute; top: calc(100% + 8px); left: 0; right: 0;
+            position: absolute; left: calc(50% - 180px);
+            top: calc(100% + 8px); bottom: auto;
+            width: 360px; min-height: 480px;
             background: #FFFFFF; border: 1px solid {GRID_COLOR}; border-radius: 14px;
-            padding: 14px 16px 16px; box-shadow: 0 12px 32px rgba(32,33,36,0.18);
-            opacity: 0; pointer-events: none; transform: translateY(-6px);
-            transition: opacity .18s ease, transform .18s ease; z-index: 30;
+            padding: 14px 18px 18px; box-shadow: 0 12px 32px rgba(32,33,36,0.18);
+            opacity: 0; pointer-events: none;
+            transform: translateY(-6px);
+            transition: opacity .18s ease, transform .18s ease, left .12s ease; z-index: 9999;
         }}
         .engine-card:hover .card-detail {{
             opacity: 1; pointer-events: auto; transform: translateY(0);
@@ -624,8 +759,8 @@ def _engine_card_grid_html(engines: list) -> str:
             text-transform: uppercase; color: {TEXT_SECONDARY}; margin: 8px 0 2px;
         }}
         .detail-reco {{ font-size: 0.84rem; color: {DARK_TEXT}; margin-top: 8px; line-height: 1.4; }}
-        .gauge-div {{ width: 100%; height: 170px; }}
-        .line-div {{ width: 100%; height: 130px; }}
+        .gauge-div {{ width: 100%; height: 230px; }}
+        .line-div {{ width: 100%; height: 190px; }}
     </style>
     </head>
     <body>
@@ -641,14 +776,107 @@ def _engine_card_grid_html(engines: list) -> str:
             }}
             {''.join(render_calls)}
 
+            /* Fix 2: `window.frameElement` is unreliable here because the
+               components.html() iframe is not guaranteed same-origin, so
+               that resize hack silently failed and the iframe stayed
+               pinned at its initial fixed height. Any content beyond that
+               height (later rows of cards, an expanded hover panel) then
+               visually spilled out and overlapped whatever Streamlit
+               rendered next (the summary table). The fix is to use
+               Streamlit's own documented resize protocol: post a
+               "streamlit:setFrameHeight" message to the parent window,
+               which Streamlit's component host listens for and uses to
+               resize the wrapping container that actually reserves layout
+               space on the page — so later elements get pushed down
+               correctly instead of overlapping. */
             function resizeFrame() {{
                 try {{
-                    var h = document.body.scrollHeight;
-                    window.frameElement.style.height = (h + 40) + 'px';
+                    var h = document.documentElement.scrollHeight;
+                    window.parent.postMessage(
+                        {{ type: "streamlit:setFrameHeight", height: h + 40 }},
+                        "*"
+                    );
                 }} catch (e) {{}}
             }}
             window.addEventListener('load', resizeFrame);
             new ResizeObserver(resizeFrame).observe(document.body);
+
+            // Fix 3: position each hover panel dynamically instead of
+            // trusting a single fixed CSS offset. Two problems that
+            // fixed offset caused: (1) cards in the leftmost/rightmost
+            // grid column could have the wider 360px panel run past the
+            // edge of the grid, and (2) cards in the bottom row always
+            // opened the panel downward, pushing it below the fold.
+            //
+            // Bug found in review: `.card-detail`'s positioned ancestor is
+            // `.engine-card` (position: relative), NOT `.engine-grid` —
+            // but `clampedLeft` below was computed relative to the GRID
+            // and then assigned straight to `detail.style.left`, which CSS
+            // interprets relative to the CARD. That mismatch is exactly
+            // why the popup showed up "very far from the card" for some
+            // cards and completely off-screen (invisible) for others. Fix:
+            // convert the grid-relative target back into a value relative
+            // to the card before assigning it.
+            var grid = document.querySelector('.engine-grid');
+            document.querySelectorAll('.engine-card').forEach(function (card) {{
+                var detail = card.querySelector('.card-detail');
+                if (!detail) return;
+                var leaveTimer = null;
+
+                card.addEventListener('mouseenter', function () {{
+                    if (leaveTimer) {{ clearTimeout(leaveTimer); leaveTimer = null; }}
+
+                    var gridRect = grid.getBoundingClientRect();
+                    var cardRect = card.getBoundingClientRect();
+                    var panelWidth = detail.offsetWidth || 360;
+                    var margin = 8;
+
+                    // Where the panel's left edge SHOULD land, in
+                    // grid-relative coordinates, clamped to stay inside
+                    // the grid on both sides.
+                    var cardLeftInGrid = cardRect.left - gridRect.left;
+                    var idealLeftInGrid = cardLeftInGrid + (cardRect.width / 2) - (panelWidth / 2);
+                    var maxLeftInGrid = gridRect.width - panelWidth - margin;
+                    var clampedLeftInGrid = Math.max(margin, Math.min(idealLeftInGrid, maxLeftInGrid));
+
+                    // Convert back to card-relative coordinates, since
+                    // that's the frame `left` actually resolves against.
+                    var leftRelativeToCard = clampedLeftInGrid - cardLeftInGrid;
+                    detail.style.left = leftRelativeToCard + 'px';
+
+                    // Flip upward for cards in (or near) the bottom row.
+                    var isBottomRow = (gridRect.bottom - cardRect.bottom) < (cardRect.height + 4);
+                    if (isBottomRow) {{
+                        detail.style.top = 'auto';
+                        detail.style.bottom = 'calc(100% + 8px)';
+                    }} else {{
+                        detail.style.top = 'calc(100% + 8px)';
+                        detail.style.bottom = 'auto';
+                    }}
+
+                    setTimeout(resizeFrame, 30);
+                }});
+
+                card.addEventListener('mouseleave', function () {{
+                    // Bug found in review: these inline overrides were
+                    // never cleared, so a bad (or simply stale) position
+                    // stuck around after the mouse left — with opacity:0
+                    // the panel is invisible but still occupies layout,
+                    // so a leftover far-off `left` kept inflating
+                    // scrollHeight/scrollWidth forever, which is what
+                    // ballooned the iframe into a page full of empty
+                    // space. Clear the inline styles once the fade-out
+                    // transition finishes, then let the frame shrink
+                    // back down.
+                    leaveTimer = setTimeout(function () {{
+                        detail.style.left = '';
+                        detail.style.top = '';
+                        detail.style.bottom = '';
+                        resizeFrame();
+                    }}, 200);
+                }});
+            }});
+
             setTimeout(resizeFrame, 300);
             setTimeout(resizeFrame, 800);
         </script>
@@ -670,7 +898,18 @@ def render_engine_cards(data: dict, df: pd.DataFrame):
         st.info("No engines match the current filter.")
         return
 
-    components.html(_engine_card_grid_html(engines), height=420, scrolling=False)
+    # Fix 2 (cont.): give the iframe a reasonable starting height based on
+    # roughly how many card rows there'll be, plus headroom for one
+    # expanded hover panel, so the layout is already correct on first
+    # paint instead of visibly jumping/overlapping while the JS resize
+    # message above corrects it a moment later.
+    approx_cols = 4  # rough desktop column estimate; live resize corrects the rest
+    rows = math.ceil(len(engines) / approx_cols)
+    base_height = rows * 130 + 40
+    hover_headroom = 560
+    initial_height = min(base_height + hover_headroom, 9000)
+
+    components.html(_engine_card_grid_html(engines), height=initial_height, scrolling=False)
 
     runway_divider()
     st.markdown("#### Fleet summary table")
