@@ -50,6 +50,17 @@ def inject_css():
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
         }
 
+        /* Prevent top element clipping and optimize container width */
+        div[data-testid="stAppViewContainer"] > section[data-testid="stSidebar"] ~ div {
+            padding-top: 2rem;
+        }
+        .main .block-container {
+            padding-top: 2rem;
+            max-width: 100%;
+            padding-left: 2rem;
+            padding-right: 2rem;
+        }
+
         .stApp {
             background: #FFFFFF;
         }
@@ -709,18 +720,16 @@ def _engine_card_grid_html(engines: list) -> str:
     <style>
         * {{ box-sizing: border-box; }}
         html, body {{
-            margin: 0; padding: 4px;
+            margin: 0; padding: 25px 12px 25px 12px;
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            /* Fix 2: never clip — the whole point of the resize script
-               below is that the iframe grows to fit this content, so the
-               content itself must never be constrained or scrollable. */
             overflow: visible;
         }}
         .engine-grid {{
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
             gap: 20px;
-            padding-bottom: 24px;
+            padding-top: 15px;
+            padding-bottom: 25px;
             overflow: visible;
         }}
         .engine-card {{
@@ -898,9 +907,12 @@ def _engine_card_grid_html(engines: list) -> str:
 def render_engine_cards(data: dict, df: pd.DataFrame):
     st.markdown("#### Engine detail")
     st.caption("Hover a card to see the full RUL gauge, degradation trend, and recommendation.")
-    risk_filter = st.multiselect(
-        "Filter by risk", options=["High", "Medium", "Low"], default=["High", "Medium", "Low"]
-    )
+
+    col_filter, col_per_page, col_page = st.columns([2, 1, 1])
+    with col_filter:
+        risk_filter = st.multiselect(
+            "Filter by risk", options=["High", "Medium", "Low"], default=["High", "Medium", "Low"]
+        )
     engines = [e for e in data["engines"] if e["risk"] in risk_filter]
     engines.sort(key=lambda e: (RISK_ORDER.get(e["risk"], 9), e["predicted_rul"]))
 
@@ -908,17 +920,30 @@ def render_engine_cards(data: dict, df: pd.DataFrame):
         st.info("No engines match the current filter.")
         return
 
-    # Fix 2 (cont.): give the iframe a reasonable starting height based on
-    # roughly how many card rows there'll be, plus headroom for one
-    # expanded hover panel, so the layout is already correct on first
-    # paint instead of visibly jumping/overlapping while the JS resize
-    # message above corrects it a moment later.
-    approx_cols = 4  # rough desktop column estimate; live resize corrects the rest
-    rows = math.ceil(len(engines) / approx_cols)
-    base_height = rows * 130 + 40
-    initial_height = max(320, base_height + 40)
+    total_engines = len(engines)
+    with col_per_page:
+        per_page = st.select_slider("Engines per page", options=[8, 12, 16, 24, 32, 48, 100], value=16)
 
-    components.html(_engine_card_grid_html(engines), height=initial_height, scrolling=False)
+    total_pages = max(1, math.ceil(total_engines / per_page))
+    with col_page:
+        page = st.number_input(f"Page (1 to {total_pages})", min_value=1, max_value=total_pages, value=1, step=1)
+
+    start_idx = (page - 1) * per_page
+    end_idx = min(start_idx + per_page, total_engines)
+    paginated_engines = engines[start_idx:end_idx]
+
+    st.caption(
+        f"Showing **{start_idx + 1}–{end_idx}** of **{total_engines}** engines "
+        f"(fleet total: {data['engine_count']})"
+    )
+
+    cards_per_row = 3  # grid column estimate for desktop
+    row_height = 160   # height of 1 card row in px
+    hover_headroom = 550  # headroom for hover gauge + trend chart popup
+    num_rows = math.ceil(len(paginated_engines) / cards_per_row)
+    dynamic_iframe_height = (num_rows * row_height) + hover_headroom
+
+    components.html(_engine_card_grid_html(paginated_engines), height=dynamic_iframe_height, scrolling=True)
 
     runway_divider()
     st.markdown("#### Fleet summary table")
